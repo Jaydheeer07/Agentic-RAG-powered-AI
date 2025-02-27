@@ -1,11 +1,12 @@
-from app.core.chunking import chunk_text, detect_content_type
 from app.config import settings
+from app.core.chunking import chunk_text, detect_content_type
+
 
 def print_chunk_stats(chunks: list, content_type: str):
     """Print statistics about the chunks"""
     total_chars = sum(len(chunk) for chunk in chunks)
     avg_chunk_size = total_chars / len(chunks) if chunks else 0
-    print(f"\nChunk Statistics:")
+    print("\nChunk Statistics:")
     print(f"Content type detected: {content_type}")
     print(f"Number of chunks: {len(chunks)}")
     print(f"Average chunk size: {avg_chunk_size:.0f} characters")
@@ -13,9 +14,23 @@ def print_chunk_stats(chunks: list, content_type: str):
     print(f"Largest chunk: {max(len(chunk) for chunk in chunks)} characters")
     print("-" * 50)
 
-def test_chunking():
+
+def test_general_chunking():
+    """
+    Test general chunking functionality with real-world examples.
+    Tests the basic chunking strategy with:
+    - Mixed content (FastAPI docs)
+    - Large code files (asyncio queue)
+    - Technical blog posts
+    """
+    print("\nTesting General Chunking Strategy...")
+    print(f"CHUNK_SIZE = {settings.CHUNK_SIZE}")
+    print(f"CHUNK_OVERLAP = {settings.CHUNK_OVERLAP}")
+    print("=" * 50)
+
     # Test case 1: Long documentation (FastAPI's dependency injection docs)
-    fastapi_docs = '''# Dependency Injection in FastAPI
+    print("\n1. FastAPI Documentation (mixed content)")
+    fastapi_docs = """# Dependency Injection in FastAPI
 
 FastAPI provides a powerful dependency injection system that helps you:
 - Share logic (dependencies)
@@ -147,9 +162,14 @@ This is especially useful for:
 * Database session handling
 * Response compression
 * And many other cases...
-'''
+"""
+
+    content_type = detect_content_type(fastapi_docs)
+    chunks = chunk_text(fastapi_docs)
+    print_chunk_stats(chunks, content_type)
 
     # Test case 2: Complex Python module (asyncio queue implementation)
+    print("\n2. Python Module - asyncio Queue (pure code)")
     python_code = '''"""A queue implementation for asyncio."""
 
 __all__ = ['Queue', 'PriorityQueue', 'LifoQueue', 'QueueFull', 'QueueEmpty']
@@ -302,8 +322,12 @@ class Queue:
                 raise
         return self.get_nowait()
 '''
+    content_type = detect_content_type(python_code)
+    chunks = chunk_text(python_code)
+    print_chunk_stats(chunks, content_type)
 
-    # Test case 3: Mixed content technical blog (explaining Python decorators)
+    # Test case 3: Technical blog post
+    print("\n3. Technical Blog Post (mixed content)")
     tech_blog = '''# Understanding Python Decorators: A Comprehensive Guide
 
 Python decorators are a powerful way to modify or enhance functions or classes without directly changing their source code. They follow the principle of open-closed: code should be open for extension but closed for modification.
@@ -482,29 +506,166 @@ def function():
 3. **Performance Impact**: Remember that each decorator adds a function call overhead. For performance-critical code, measure the impact.
 
 Remember that decorators are a powerful tool in Python, but with great power comes great responsibility. Use them wisely to make your code more maintainable and elegant.'''
-
-    print("\nTesting chunking with new parameters:")
-    print(f"CHUNK_SIZE = {settings.CHUNK_SIZE}")
-    print(f"CHUNK_OVERLAP = {settings.CHUNK_OVERLAP}")
-    print("=" * 50)
-
-    # Test FastAPI documentation
-    print("\n1. FastAPI Documentation (mixed content)")
-    content_type = detect_content_type(fastapi_docs)
-    chunks = chunk_text(fastapi_docs)
-    print_chunk_stats(chunks, content_type)
-
-    # Test Python module
-    print("\n2. Python Module - asyncio Queue (pure code)")
-    content_type = detect_content_type(python_code)
-    chunks = chunk_text(python_code)
-    print_chunk_stats(chunks, content_type)
-
-    # Test technical blog
-    print("\n3. Technical Blog Post (mixed content)")
     content_type = detect_content_type(tech_blog)
     chunks = chunk_text(tech_blog)
     print_chunk_stats(chunks, content_type)
 
+
+def test_ast_chunking():
+    """
+    Test AST-based chunking with Python code.
+    Tests the advanced chunking strategy with:
+    - Python classes and methods
+    - Multiple functions with imports
+    - Dependency preservation
+    """
+    print("\nTesting AST-based Chunking Strategy...")
+    print("-" * 50)
+
+    # Test case 1: Python class with methods
+    print("\n1. Python Class Definition")
+    class_code = '''
+class DataProcessor:
+    """A class to process data with various methods."""
+    
+    def __init__(self, data):
+        self.data = data
+        self.processed = None
+        
+    def process(self):
+        """Process the data."""
+        if not self.data:
+            raise ValueError("No data to process")
+        self.processed = [x * 2 for x in self.data]
+        return self.processed
+        
+    def validate(self):
+        """Validate the data."""
+        if not isinstance(self.data, list):
+            raise TypeError("Data must be a list")
+        if not all(isinstance(x, (int, float)) for x in self.data):
+            raise TypeError("All elements must be numbers")
+        
+    def get_stats(self):
+        """Get statistics about the data."""
+        if not self.processed:
+            self.process()
+        return {
+            'mean': sum(self.processed) / len(self.processed),
+            'max': max(self.processed),
+            'min': min(self.processed)
+        }
+'''
+    chunks = chunk_text(class_code)
+    print("Python class chunking:")
+    for i, chunk in enumerate(chunks, 1):
+        print(f"\nChunk {i}:")
+        print(chunk)
+        print("-" * 30)
+
+    # Test case 2: Multiple functions with imports
+    print("\n2. Multiple Functions with Dependencies")
+    functions_code = '''
+import numpy as np
+from typing import List, Dict, Optional
+import pandas as pd
+
+def preprocess_data(data: pd.DataFrame) -> pd.DataFrame:
+    """Preprocess the input data."""
+    # Remove missing values
+    data = data.dropna()
+    
+    # Normalize numeric columns
+    numeric_cols = data.select_dtypes(include=['float64', 'int64']).columns
+    data[numeric_cols] = (data[numeric_cols] - data[numeric_cols].mean()) / data[numeric_cols].std()
+    
+    return data
+
+def train_model(X: np.ndarray, y: np.ndarray) -> Dict:
+    """Train a simple model."""
+    # Calculate weights using numpy
+    weights = np.linalg.inv(X.T @ X) @ X.T @ y
+    
+    # Calculate predictions and error
+    y_pred = X @ weights
+    mse = np.mean((y - y_pred) ** 2)
+    
+    return {
+        'weights': weights,
+        'mse': mse
+    }
+
+def predict(X: np.ndarray, model: Dict) -> np.ndarray:
+    """Make predictions using the trained model."""
+    return X @ model['weights']
+'''
+    chunks = chunk_text(functions_code)
+    print("\nMultiple functions chunking:")
+    for i, chunk in enumerate(chunks, 1):
+        print(f"\nChunk {i}:")
+        print(chunk)
+        print("-" * 30)
+
+
+def test_mixed_content():
+    """
+    Test chunking with mixed markdown and code content.
+    Tests how the system handles:
+    - Markdown text with embedded code blocks
+    - Python code block detection and processing
+    - Context preservation in mixed content
+    """
+    print("\nTesting Mixed Content Strategy...")
+    print("-" * 50)
+
+    mixed_content = '''# Python Data Processing Guide
+
+This guide explains how to process data using Python.
+
+## Basic Data Processing
+
+Here's a simple example of data processing:
+
+```python
+import pandas as pd
+import numpy as np
+
+def process_data(df):
+    # Remove missing values
+    df = df.dropna()
+    
+    # Normalize numeric columns
+    numeric_cols = df.select_dtypes(include=['float64', 'int64']).columns
+    df[numeric_cols] = (df[numeric_cols] - df[numeric_cols].mean()) / df[numeric_cols].std()
+    
+    return df
+```
+
+## Advanced Processing
+
+For more advanced processing, you might want to use custom classes:
+
+```python
+class DataProcessor:
+    def __init__(self, data):
+        self.data = data
+        
+    def process(self):
+        return self.data * 2
+```
+
+Remember to always validate your data before processing!
+'''
+    chunks = chunk_text(mixed_content)
+    print("Mixed content chunking:")
+    for i, chunk in enumerate(chunks, 1):
+        print(f"\nChunk {i}:")
+        print(chunk)
+        print("-" * 30)
+
+
 if __name__ == "__main__":
-    test_chunking()
+    # Run all tests in sequence
+    test_general_chunking()  # Test basic chunking strategy
+    test_ast_chunking()      # Test Python-specific AST chunking
+    test_mixed_content()     # Test mixed content handling

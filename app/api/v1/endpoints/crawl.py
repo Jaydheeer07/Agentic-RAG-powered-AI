@@ -21,7 +21,7 @@ async def _run_crawl(task_id: str, sitemap_url: str, max_concurrent: int, db: Se
             crawl_tasks[task_id] = {
                 "status": "failed",
                 "message": "No URLs found in sitemap",
-                "completed_at": datetime.utcnow()
+                "completed_at": datetime.now(datetime.timezone.utc)
             }
             return
 
@@ -31,13 +31,13 @@ async def _run_crawl(task_id: str, sitemap_url: str, max_concurrent: int, db: Se
             "status": "completed",
             "message": f"Successfully crawled {stats['success_count']} URLs",
             "stats": stats,
-            "completed_at": datetime.utcnow()
+            "completed_at": datetime.now(datetime.timezone.utc)
         }
     except Exception as e:
         crawl_tasks[task_id] = {
             "status": "failed",
             "message": str(e),
-            "completed_at": datetime.utcnow()
+            "completed_at": datetime.now(datetime.timezone.utc)
         }
 
 @router.post("/crawl", response_model=CrawlResponse)
@@ -50,14 +50,14 @@ async def crawl_urls(
     Start a crawling task for the given sitemap URL.
     The crawling will run in the background.
     """
-    task_id = f"crawl_{datetime.utcnow().timestamp()}"
+    task_id = f"crawl_{datetime.now(datetime.timezone.utc).timestamp()}"
     max_concurrent = request.max_concurrent or settings.MAX_CONCURRENT_CRAWLS
 
     # Initialize task status
     crawl_tasks[task_id] = {
         "status": "running",
         "message": "Crawling started",
-        "started_at": datetime.utcnow()
+        "started_at": datetime.now(datetime.timezone.utc)
     }
 
     # Start crawling in background
