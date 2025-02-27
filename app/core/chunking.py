@@ -5,6 +5,7 @@ from typing import List
 import nltk
 
 from app.config import settings
+from app.core.ast_chunker import chunk_python_code, format_chunk_with_context
 
 # Set NLTK data path to the project directory
 nltk_data_dir = os.path.join(
@@ -17,19 +18,48 @@ nltk.data.path.append(nltk_data_dir)
 nltk.download("punkt", download_dir=nltk_data_dir, quiet=True)
 
 
+def is_python_code(text: str) -> bool:
+    """
+    Determine if the text is likely Python code.
+    
+    Args:
+        text: Text to analyze
+        
+    Returns:
+        bool: True if text appears to be Python code
+    """
+    # Check for common Python patterns
+    python_patterns = [
+        r"def\s+\w+\s*\(",  # Function definition
+        r"class\s+\w+",  # Class definition
+        r"import\s+\w+",  # Import statement
+        r"from\s+\w+\s+import",  # From import
+        r"@\w+",  # Decorator
+        r"with\s+\w+",  # With statement
+        r"try:\s*\n",  # Try block
+        r"if\s+__name__\s*==\s*['\"]__main__['\"]",  # Main block
+    ]
+    
+    # Count how many Python patterns we find
+    pattern_matches = sum(1 for pattern in python_patterns if re.search(pattern, text))
+    
+    # If we find multiple Python patterns, it's likely Python code
+    return pattern_matches >= 2
+
+
 def detect_content_type(text: str) -> str:
     """
     Detect if the content is code, text, or mixed.
-
+    
     Args:
         text: The text to analyze
-
+        
     Returns:
         str: 'code', 'text', or 'mixed'
     """
     # Check for code block markers
     code_markers = len(re.findall(r"```[\s\S]*?```", text))
-
+    
     # Check for common code patterns
     code_patterns = [
         r"def\s+\w+\s*\(",  # Python function
@@ -39,11 +69,11 @@ def detect_content_type(text: str) -> str:
         r"<[^>]+>",  # HTML tags
         r"\w+\s*=\s*function",  # JavaScript function
     ]
-
+    
     code_pattern_matches = sum(
         1 for pattern in code_patterns if re.search(pattern, text)
     )
-
+    
     if code_markers > 0 or code_pattern_matches >= 2:
         return "code" if code_markers > 0 else "mixed"
     return "text"
@@ -52,10 +82,10 @@ def detect_content_type(text: str) -> str:
 def split_into_sentences(text: str) -> List[str]:
     """
     Split text into sentences using NLTK with fallback to simple splitting.
-
+    
     Args:
         text: The text to split
-
+        
     Returns:
         List of sentences
     """
@@ -72,12 +102,12 @@ def get_chunk_params(
 ) -> tuple[int, int]:
     """
     Get appropriate chunk size and overlap based on content type and maximum limits.
-
+    
     Args:
         content_type: Type of content ('code', 'text', or 'mixed')
         max_chunk_size: Maximum allowed chunk size from settings
         max_chunk_overlap: Maximum allowed chunk overlap from settings
-
+        
     Returns:
         Tuple of (chunk_size, chunk_overlap)
     """
@@ -102,8 +132,32 @@ def get_chunk_params(
                 ),
             ),
         )
-
+    
     return chunk_size, chunk_overlap
+
+
+def extract_code_blocks(text: str) -> tuple[str, List[tuple[str, str]]]:
+    """
+    Extract code blocks from text and replace with placeholders.
+    
+    Args:
+        text: Text containing code blocks
+        
+    Returns:
+        Tuple of (text with placeholders, list of (placeholder, code block))
+    """
+    code_blocks = []
+    text_without_code = text
+    
+    # Extract code blocks and replace with placeholders
+    code_pattern = r"```(?:python)?\n([\s\S]*?)```"
+    for i, match in enumerate(re.finditer(code_pattern, text)):
+        code = match.group(1).strip()
+        placeholder = f"CODE_BLOCK_{i}"
+        code_blocks.append((placeholder, code))
+        text_without_code = text_without_code.replace(match.group(0), placeholder)
+    
+    return text_without_code, code_blocks
 
 
 def chunk_text(
@@ -112,107 +166,128 @@ def chunk_text(
     chunk_overlap: int = settings.CHUNK_OVERLAP,
 ) -> List[str]:
     """
-    Split text into overlapping chunks while preserving markdown structure and semantic boundaries.
-
+    Split text into overlapping chunks while preserving structure and semantic boundaries.
+    
     The chunk_size and chunk_overlap parameters from settings represent maximum allowed values.
     Actual chunk sizes and overlaps are adjusted based on content type:
     - Code: Larger chunks (512+ chars) with no overlap
     - Mixed: Medium chunks with minimal overlap
     - Text: Smaller chunks with 10-20% overlap
-
+    
+    For Python code, uses AST-based chunking to preserve logical boundaries.
+    
     Args:
         text: The text to split into chunks
         chunk_size: Maximum chunk size (default: from settings)
         chunk_overlap: Maximum chunk overlap (default: from settings)
-
+    
     Returns:
         List of text chunks
     """
-    # Detect content type
+    # First, check if this is pure Python code
+    if is_python_code(text):
+        # Use AST-based chunking for Python code
+        code_chunks = chunk_python_code(text, max_chunk_size=chunk_size)
+        return [format_chunk_with_context(chunk) for chunk in code_chunks]
+    
+    # For mixed content or plain text, use our existing strategy
     content_type = detect_content_type(text)
-
+    
     # Get appropriate chunk parameters based on content type
     adjusted_size, adjusted_overlap = get_chunk_params(
         content_type, chunk_size, chunk_overlap
     )
-
-    # Preserve code blocks
-    code_blocks = []
-    text_without_code = text
-
-    # Extract code blocks and replace with placeholders
-    code_pattern = r"```[\s\S]*?```"
-    for i, match in enumerate(re.finditer(code_pattern, text)):
-        placeholder = f"CODE_BLOCK_{i}"
-        code_blocks.append(match.group())
-        text_without_code = text_without_code.replace(match.group(), placeholder)
-
-    # Split on semantic boundaries
-    splits = []
-    current_chunk = ""
-    current_size = 0
-
-    # Split on paragraphs and headers first
-    paragraphs = re.split(r"\n\s*\n|\n#{1,6}\s", text_without_code)
-
-    for paragraph in paragraphs:
-        paragraph = paragraph.strip()
-        if not paragraph:
-            continue
-
-        # For text content, split into sentences
-        if content_type == "text":
-            sentences = split_into_sentences(paragraph)
-        else:
-            sentences = [paragraph]
-
-        for sentence in sentences:
-            sentence = sentence.strip()
-            if not sentence:
+    
+    # Handle mixed content with code blocks
+    if content_type in ["code", "mixed"]:
+        # Extract code blocks and process them separately
+        text_without_code, code_blocks = extract_code_blocks(text)
+        
+        # Process the non-code parts
+        chunks = []
+        current_chunk = ""
+        current_size = 0
+        
+        # Split on paragraphs and headers
+        paragraphs = re.split(r"\n\s*\n|\n#{1,6}\s", text_without_code)
+        
+        for paragraph in paragraphs:
+            paragraph = paragraph.strip()
+            if not paragraph:
                 continue
-
-            # If adding this sentence would exceed chunk size
-            if current_size + len(sentence) > adjusted_size:
-                if current_chunk:
-                    splits.append(current_chunk.strip())
-                current_chunk = sentence
-                current_size = len(sentence)
-            else:
-                if current_chunk:
-                    current_chunk += " "
-                current_chunk += sentence
-                current_size += len(sentence) + 1  # +1 for space
-
-    if current_chunk:
-        splits.append(current_chunk.strip())
-
-    # Create overlapping chunks
-    chunks = []
-    for i in range(len(splits)):
-        chunk = splits[i]
-
-        # Add overlap from next chunk if available and if not code
-        if i < len(splits) - 1 and adjusted_overlap > 0 and content_type != "code":
-            next_chunk = splits[i + 1]
-            # For text content, try to overlap at sentence boundaries
+            
+            # For text content, split into sentences
             if content_type == "text":
-                next_sentences = split_into_sentences(next_chunk)
-                overlap_text = ""
-                for sent in next_sentences:
-                    if len(overlap_text) + len(sent) <= adjusted_overlap:
-                        overlap_text += " " + sent
-                    else:
-                        break
-                if overlap_text:
-                    chunk += "\n\n" + overlap_text.strip()
+                sentences = split_into_sentences(paragraph)
             else:
-                overlap_text = next_chunk[:adjusted_overlap]
-                chunk += "\n\n" + overlap_text
-
-        # Restore code blocks
-        for j, code_block in enumerate(code_blocks):
-            chunk = chunk.replace(f"CODE_BLOCK_{j}", code_block)
-
-        chunks.append(chunk)
-
-    return chunks
+                sentences = [paragraph]
+            
+            for sentence in sentences:
+                sentence = sentence.strip()
+                if not sentence:
+                    continue
+                
+                # If adding this sentence would exceed chunk size
+                if current_size + len(sentence) > adjusted_size:
+                    if current_chunk:
+                        chunks.append(current_chunk.strip())
+                    current_chunk = sentence
+                    current_size = len(sentence)
+                else:
+                    if current_chunk:
+                        current_chunk += " "
+                    current_chunk += sentence
+                    current_size += len(sentence) + 1  # +1 for space
+        
+        if current_chunk:
+            chunks.append(current_chunk.strip())
+        
+        # Create overlapping chunks
+        final_chunks = []
+        for i in range(len(chunks)):
+            chunk = chunks[i]
+            
+            # Add overlap from next chunk if available
+            if i < len(chunks) - 1 and adjusted_overlap > 0:
+                next_chunk = chunks[i + 1]
+                if content_type == "text":
+                    # For text, try to overlap at sentence boundaries
+                    next_sentences = split_into_sentences(next_chunk)
+                    overlap_text = ""
+                    for sent in next_sentences:
+                        if len(overlap_text) + len(sent) <= adjusted_overlap:
+                            overlap_text += " " + sent
+                        else:
+                            break
+                    if overlap_text:
+                        chunk += "\n\n" + overlap_text.strip()
+                else:
+                    # For mixed content, use character-based overlap
+                    overlap_text = next_chunk[:adjusted_overlap]
+                    chunk += "\n\n" + overlap_text
+            
+            # Restore code blocks
+            chunk_with_code = chunk
+            for placeholder, code in code_blocks:
+                if placeholder in chunk:
+                    # If it's Python code, use AST chunking
+                    if is_python_code(code):
+                        code_chunks = chunk_python_code(code, max_chunk_size=adjusted_size)
+                        formatted_code = "\n".join(
+                            format_chunk_with_context(c) for c in code_chunks
+                        )
+                        chunk_with_code = chunk_with_code.replace(
+                            placeholder, f"```python\n{formatted_code}\n```"
+                        )
+                    else:
+                        # For non-Python code, keep as is
+                        chunk_with_code = chunk_with_code.replace(
+                            placeholder, f"```\n{code}\n```"
+                        )
+            
+            final_chunks.append(chunk_with_code)
+        
+        return final_chunks
+    
+    # For plain text, use the existing chunking logic
+    return chunk_text(text, chunk_size, chunk_overlap)

@@ -228,3 +228,130 @@ The recommended next improvement is **AST-Based Code Chunking** because:
 5. Integrate with existing content-type detection
 
 This improvement will significantly enhance our handling of code-heavy content while maintaining our current capabilities for text and mixed content.
+
+## AST-Based Code Chunking
+
+### Overview
+The AST-based chunking strategy is specifically designed for Python code, utilizing Python's built-in `ast` module to preserve logical code boundaries and maintain context. This approach ensures that code chunks remain semantically meaningful and executable.
+
+### Key Features
+
+1. **Logical Boundary Preservation**
+   - Functions stay complete and together
+   - Classes and their methods remain unified
+   - Import statements are preserved with their dependent code
+
+2. **Dependency Tracking**
+   - Tracks imports required by each chunk
+   - Identifies global variable dependencies
+   - Ensures chunks have necessary context
+
+3. **Smart Chunking**
+   - Respects Python's syntactic structure
+   - Maintains docstrings and comments
+   - Handles nested definitions appropriately
+
+### Implementation Details
+
+1. **Code Analysis**
+   ```python
+   class CodeChunk:
+       content: str          # The actual code
+       imports: Set[str]     # Required imports
+       global_deps: Set[str] # Global dependencies
+       start_line: int      # Starting line number
+       end_line: int        # Ending line number
+   ```
+
+2. **Processing Steps**
+   - Parse code into AST
+   - Collect all imports
+   - Analyze global dependencies
+   - Split at logical boundaries
+   - Format chunks with context
+
+3. **Integration with Main Chunker**
+   - Automatic Python code detection
+   - Seamless handling of code blocks in markdown
+   - Fallback to regular chunking for non-Python code
+
+### Advantages
+
+1. **Code Integrity**
+   - No broken function/class definitions
+   - Dependencies always included
+   - Maintains code executability
+
+2. **Context Preservation**
+   - Imports stay with dependent code
+   - Global variables properly tracked
+   - Docstrings preserved
+
+3. **Mixed Content Support**
+   - Works within markdown documents
+   - Handles multiple code blocks
+   - Preserves surrounding context
+
+### Configuration
+
+The AST chunker respects the global chunking parameters but adapts them for code:
+- `CHUNK_SIZE`: Maximum size for a code chunk
+- No overlap for pure code chunks
+- Preserves logical boundaries even if it means slightly larger chunks
+
+### Example
+
+Input:
+```python
+import numpy as np
+
+def process_data(data):
+    """Process input data."""
+    return np.mean(data)
+
+class DataProcessor:
+    def __init__(self, data):
+        self.data = data
+    
+    def analyze(self):
+        return process_data(self.data)
+```
+
+Output Chunks:
+1. First chunk (imports and function):
+   ```python
+   import numpy as np
+
+   def process_data(data):
+       """Process input data."""
+       return np.mean(data)
+   ```
+
+2. Second chunk (class with imports):
+   ```python
+   import numpy as np
+
+   class DataProcessor:
+       def __init__(self, data):
+           self.data = data
+       
+       def analyze(self):
+           return process_data(self.data)
+   ```
+
+### Future Improvements
+
+1. **Multi-Language Support**
+   - Integrate Tree-sitter for other languages
+   - Language-specific chunking strategies
+   - Universal AST handling
+
+2. **Enhanced Analysis**
+   - Type inference for better context
+   - Control flow analysis
+   - Data flow tracking
+
+3. **Optimization**
+   - Chunk size balancing
+   - Import optimization
+   - Cache frequently used chunks
