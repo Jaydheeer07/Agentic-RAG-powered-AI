@@ -160,6 +160,41 @@ def extract_code_blocks(text: str) -> tuple[str, List[tuple[str, str]]]:
     return text_without_code, code_blocks
 
 
+def chunk_plain_text(text: str, chunk_size: int, chunk_overlap: int) -> List[str]:
+    """Split plain text into chunks using sentence boundaries."""
+    sentences = split_into_sentences(text)
+    chunks = []
+    current_chunk = []
+    current_length = 0
+    
+    for sentence in sentences:
+        sentence_length = len(sentence)
+        
+        # If adding this sentence would exceed chunk size
+        if current_length + sentence_length > chunk_size and current_chunk:
+            # Save current chunk
+            chunks.append(" ".join(current_chunk))
+            # Keep last part for overlap
+            overlap_size = 0
+            overlap_chunk = []
+            for s in reversed(current_chunk):
+                if overlap_size + len(s) > chunk_overlap:
+                    break
+                overlap_size += len(s)
+                overlap_chunk.insert(0, s)
+            current_chunk = overlap_chunk
+            current_length = overlap_size
+        
+        current_chunk.append(sentence)
+        current_length += sentence_length
+    
+    # Add the last chunk if there is one
+    if current_chunk:
+        chunks.append(" ".join(current_chunk))
+    
+    return chunks
+
+
 def chunk_text(
     text: str,
     chunk_size: int = settings.CHUNK_SIZE,
@@ -184,110 +219,42 @@ def chunk_text(
     Returns:
         List of text chunks
     """
-    # First, check if this is pure Python code
-    if is_python_code(text):
-        # Use AST-based chunking for Python code
-        code_chunks = chunk_python_code(text, max_chunk_size=chunk_size)
-        return [format_chunk_with_context(chunk) for chunk in code_chunks]
-    
-    # For mixed content or plain text, use our existing strategy
+    # Detect content type
     content_type = detect_content_type(text)
     
-    # Get appropriate chunk parameters based on content type
-    adjusted_size, adjusted_overlap = get_chunk_params(
-        content_type, chunk_size, chunk_overlap
-    )
+    # Get appropriate chunk parameters
+    chunk_size, chunk_overlap = get_chunk_params(content_type, chunk_size, chunk_overlap)
     
-    # Handle mixed content with code blocks
-    if content_type in ["code", "mixed"]:
-        # Extract code blocks and process them separately
-        text_without_code, code_blocks = extract_code_blocks(text)
+    # For Python code, use AST-based chunking
+    if is_python_code(text):
+        return chunk_python_code(text)
         
-        # Process the non-code parts
-        chunks = []
-        current_chunk = ""
-        current_size = 0
+    # For mixed content, handle code blocks separately
+    if content_type == "mixed":
+        # Extract code blocks
+        text_with_placeholders, code_blocks = extract_code_blocks(text)
         
-        # Split on paragraphs and headers
-        paragraphs = re.split(r"\n\s*\n|\n#{1,6}\s", text_without_code)
+        # Chunk the text
+        chunks = chunk_plain_text(text_with_placeholders, chunk_size, chunk_overlap)
         
-        for paragraph in paragraphs:
-            paragraph = paragraph.strip()
-            if not paragraph:
-                continue
-            
-            # For text content, split into sentences
-            if content_type == "text":
-                sentences = split_into_sentences(paragraph)
-            else:
-                sentences = [paragraph]
-            
-            for sentence in sentences:
-                sentence = sentence.strip()
-                if not sentence:
-                    continue
-                
-                # If adding this sentence would exceed chunk size
-                if current_size + len(sentence) > adjusted_size:
-                    if current_chunk:
-                        chunks.append(current_chunk.strip())
-                    current_chunk = sentence
-                    current_size = len(sentence)
-                else:
-                    if current_chunk:
-                        current_chunk += " "
-                    current_chunk += sentence
-                    current_size += len(sentence) + 1  # +1 for space
-        
-        if current_chunk:
-            chunks.append(current_chunk.strip())
-        
-        # Create overlapping chunks
+        # Restore code blocks
         final_chunks = []
-        for i in range(len(chunks)):
-            chunk = chunks[i]
-            
-            # Add overlap from next chunk if available
-            if i < len(chunks) - 1 and adjusted_overlap > 0:
-                next_chunk = chunks[i + 1]
-                if content_type == "text":
-                    # For text, try to overlap at sentence boundaries
-                    next_sentences = split_into_sentences(next_chunk)
-                    overlap_text = ""
-                    for sent in next_sentences:
-                        if len(overlap_text) + len(sent) <= adjusted_overlap:
-                            overlap_text += " " + sent
-                        else:
-                            break
-                    if overlap_text:
-                        chunk += "\n\n" + overlap_text.strip()
-                else:
-                    # For mixed content, use character-based overlap
-                    overlap_text = next_chunk[:adjusted_overlap]
-                    chunk += "\n\n" + overlap_text
-            
-            # Restore code blocks
+        for chunk in chunks:
             chunk_with_code = chunk
             for placeholder, code in code_blocks:
                 if placeholder in chunk:
-                    # If it's Python code, use AST chunking
                     if is_python_code(code):
-                        code_chunks = chunk_python_code(code, max_chunk_size=adjusted_size)
-                        formatted_code = "\n".join(
-                            format_chunk_with_context(c) for c in code_chunks
-                        )
                         chunk_with_code = chunk_with_code.replace(
-                            placeholder, f"```python\n{formatted_code}\n```"
+                            placeholder, 
+                            "\n".join(chunk_python_code(code))
                         )
                     else:
-                        # For non-Python code, keep as is
                         chunk_with_code = chunk_with_code.replace(
-                            placeholder, f"```\n{code}\n```"
+                            placeholder, 
+                            f"```\n{code}\n```"
                         )
-            
             final_chunks.append(chunk_with_code)
-        
         return final_chunks
     
-    # For plain text, use the existing chunking logic
-    return chunk_text(text, chunk_size, chunk_overlap)
+    # For plain text, use sentence-based chunking
+    return chunk_plain_text(text, chunk_size, chunk_overlap)

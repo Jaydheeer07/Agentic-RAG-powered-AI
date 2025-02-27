@@ -14,8 +14,8 @@ class Document(Base):
     url = Column(String, nullable=False, unique=True)
     title = Column(String)
     content = Column(Text)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.now(datetime.timezone.utc))
+    updated_at = Column(DateTime, default=datetime.now(datetime.timezone.utc), onupdate=datetime.now(datetime.timezone.utc))
 
     # Relationship with chunks
     chunks = relationship("Chunk", back_populates="document", cascade="all, delete-orphan")
@@ -32,7 +32,8 @@ class Chunk(Base):
     content = Column(Text, nullable=False)
     embedding = Column(Vector(1536))  # For OpenAI embeddings
     metadata = Column(JSON)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.now(datetime.timezone.utc))
+    updated_at = Column(DateTime, default=datetime.now(datetime.timezone.utc), onupdate=datetime.now(datetime.timezone.utc))
 
     # Relationship with document
     document = relationship("Document", back_populates="chunks")
