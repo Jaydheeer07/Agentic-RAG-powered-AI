@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List
 from xml.etree import ElementTree
 
@@ -113,7 +113,7 @@ async def crawl_parallel(urls: List[str], max_concurrent: int = 3) -> Dict[str, 
                         url=url,
                         title=result.title or "Untitled",
                         content=result.text,
-                        crawled_at=datetime.now(datetime.timezone.utc),
+                        crawled_at=datetime.now(timezone.utc),
                     )
                     db.add(document)
                     db.commit()

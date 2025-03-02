@@ -37,6 +37,7 @@ nltk_data/
 *.log
 output/
 test_output.txt
+test_outputs/
 
 # OS-specific
 .DS_Store

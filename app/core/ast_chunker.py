@@ -8,7 +8,8 @@ and dependencies.
 import ast
 from dataclasses import dataclass
 from typing import List, Set, Optional
-
+from app.config import settings
+from app.core.text_chunker import chunk_plain_text
 
 @dataclass
 class CodeChunk:
@@ -71,7 +72,7 @@ def get_node_source(node: ast.AST, source_lines: List[str]) -> str:
     return ''
 
 
-def chunk_python_code(code: str, max_chunk_size: int = 5000) -> List[CodeChunk]:
+def chunk_python_code(code: str, max_chunk_size: int = settings.CHUNK_SIZE) -> List[CodeChunk]:
     """
     Split Python code into chunks using AST analysis.
     
@@ -85,14 +86,15 @@ def chunk_python_code(code: str, max_chunk_size: int = 5000) -> List[CodeChunk]:
     try:
         tree = ast.parse(code)
     except SyntaxError:
-        # If code can't be parsed as Python, return it as a single chunk
+        # If code can't be parsed as Python, chunk it as plain text
+        chunks = chunk_plain_text(code, max_chunk_size, 0)  # No overlap for code
         return [CodeChunk(
-            content=code,
+            content=chunk,
             imports=set(),
             global_deps=set(),
             start_line=1,
-            end_line=len(code.splitlines())
-        )]
+            end_line=len(chunk.splitlines())
+        ) for chunk in chunks]
     
     # Collect all imports
     import_collector = ImportCollector()

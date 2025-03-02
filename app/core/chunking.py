@@ -1,21 +1,11 @@
-import os
-import re
-from typing import List
+"""Main chunking module for handling different content types."""
 
-import nltk
+import re
+from typing import List, Tuple
 
 from app.config import settings
 from app.core.ast_chunker import chunk_python_code, format_chunk_with_context
-
-# Set NLTK data path to the project directory
-nltk_data_dir = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "nltk_data"
-)
-os.makedirs(nltk_data_dir, exist_ok=True)
-nltk.data.path.append(nltk_data_dir)
-
-# Download required NLTK data
-nltk.download("punkt", download_dir=nltk_data_dir, quiet=True)
+from app.core.text_chunker import chunk_plain_text
 
 
 def is_python_code(text: str) -> bool:
@@ -74,27 +64,13 @@ def detect_content_type(text: str) -> str:
         1 for pattern in code_patterns if re.search(pattern, text)
     )
     
-    if code_markers > 0 or code_pattern_matches >= 2:
-        return "code" if code_markers > 0 else "mixed"
+    # If we have markdown code blocks, it's mixed content
+    if code_markers > 0:
+        return "mixed"
+    # If we have multiple code patterns but no markers, it might be pure code
+    elif code_pattern_matches >= 2:
+        return "code"
     return "text"
-
-
-def split_into_sentences(text: str) -> List[str]:
-    """
-    Split text into sentences using NLTK with fallback to simple splitting.
-    
-    Args:
-        text: The text to split
-        
-    Returns:
-        List of sentences
-    """
-    try:
-        return nltk.sent_tokenize(text)
-    except Exception:
-        # Fallback to simple sentence splitting
-        simple_splits = re.split(r"(?<=[.!?])\s+", text)
-        return [s.strip() for s in simple_splits if s.strip()]
 
 
 def get_chunk_params(
@@ -136,63 +112,68 @@ def get_chunk_params(
     return chunk_size, chunk_overlap
 
 
-def extract_code_blocks(text: str) -> tuple[str, List[tuple[str, str]]]:
-    """
-    Extract code blocks from text and replace with placeholders.
+def extract_code_blocks(text: str) -> Tuple[str, List[str]]:
+    """Extract code blocks from markdown text."""
+    # Split on code block markers, preserving the markers
+    parts = re.split(r"(```(?:.*?)\n[\s\S]*?```)", text)
     
-    Args:
-        text: Text containing code blocks
-        
-    Returns:
-        Tuple of (text with placeholders, list of (placeholder, code block))
-    """
+    text_parts = []
     code_blocks = []
-    text_without_code = text
     
-    # Extract code blocks and replace with placeholders
-    code_pattern = r"```(?:python)?\n([\s\S]*?)```"
-    for i, match in enumerate(re.finditer(code_pattern, text)):
-        code = match.group(1).strip()
-        placeholder = f"CODE_BLOCK_{i}"
-        code_blocks.append((placeholder, code))
-        text_without_code = text_without_code.replace(match.group(0), placeholder)
+    for part in parts:
+        if part.startswith("```"):
+            # Store code block with markers
+            code_blocks.append(part)
+            # Add a placeholder for reconstruction
+            text_parts.append(f"[CODE_BLOCK_{len(code_blocks)-1}]")
+        else:
+            text_parts.append(part)
     
-    return text_without_code, code_blocks
+    return "".join(text_parts), code_blocks
 
 
-def chunk_plain_text(text: str, chunk_size: int, chunk_overlap: int) -> List[str]:
-    """Split plain text into chunks using sentence boundaries."""
-    sentences = split_into_sentences(text)
-    chunks = []
-    current_chunk = []
-    current_length = 0
+def find_list_boundary(text: str, start_idx: int) -> int:
+    """Find the end of a list starting at start_idx."""
+    lines = text[start_idx:].split('\n')
+    list_patterns = [
+        r'^\s*[\-\*]\s',  # Bullet points
+        r'^\s*\d+[\.\)]\s',  # Numbered lists
+        r'^\s*[a-zA-Z][\.\)]\s',  # Letter lists
+    ]
     
-    for sentence in sentences:
-        sentence_length = len(sentence)
+    end_idx = start_idx
+    in_list = False
+    list_indent = 0
+    
+    for i, line in enumerate(lines):
+        # Skip empty lines at start
+        if not in_list and not line.strip():
+            end_idx += len(line) + 1
+            continue
+            
+        # Check if line is list item
+        is_list_item = any(re.match(pattern, line) for pattern in list_patterns)
         
-        # If adding this sentence would exceed chunk size
-        if current_length + sentence_length > chunk_size and current_chunk:
-            # Save current chunk
-            chunks.append(" ".join(current_chunk))
-            # Keep last part for overlap
-            overlap_size = 0
-            overlap_chunk = []
-            for s in reversed(current_chunk):
-                if overlap_size + len(s) > chunk_overlap:
-                    break
-                overlap_size += len(s)
-                overlap_chunk.insert(0, s)
-            current_chunk = overlap_chunk
-            current_length = overlap_size
-        
-        current_chunk.append(sentence)
-        current_length += sentence_length
+        if is_list_item and not in_list:
+            # Start of list
+            in_list = True
+            list_indent = len(line) - len(line.lstrip())
+        elif in_list:
+            # Check if we're still in list
+            if not line.strip():
+                # Empty line might be list continuation
+                continue
+            current_indent = len(line) - len(line.lstrip())
+            if current_indent < list_indent and not is_list_item:
+                # End of list
+                break
+        elif not is_list_item and line.strip():
+            # Non-list content
+            break
+            
+        end_idx += len(line) + 1
     
-    # Add the last chunk if there is one
-    if current_chunk:
-        chunks.append(" ".join(current_chunk))
-    
-    return chunks
+    return end_idx
 
 
 def chunk_text(
@@ -200,61 +181,71 @@ def chunk_text(
     chunk_size: int = settings.CHUNK_SIZE,
     chunk_overlap: int = settings.CHUNK_OVERLAP,
 ) -> List[str]:
-    """
-    Split text into overlapping chunks while preserving structure and semantic boundaries.
-    
-    The chunk_size and chunk_overlap parameters from settings represent maximum allowed values.
-    Actual chunk sizes and overlaps are adjusted based on content type:
-    - Code: Larger chunks (512+ chars) with no overlap
-    - Mixed: Medium chunks with minimal overlap
-    - Text: Smaller chunks with 10-20% overlap
-    
-    For Python code, uses AST-based chunking to preserve logical boundaries.
-    
-    Args:
-        text: The text to split into chunks
-        chunk_size: Maximum chunk size (default: from settings)
-        chunk_overlap: Maximum chunk overlap (default: from settings)
-    
-    Returns:
-        List of text chunks
-    """
-    # Detect content type
+    """Split text into chunks while preserving semantic boundaries."""
     content_type = detect_content_type(text)
-    
-    # Get appropriate chunk parameters
     chunk_size, chunk_overlap = get_chunk_params(content_type, chunk_size, chunk_overlap)
     
-    # For Python code, use AST-based chunking
-    if is_python_code(text):
-        return chunk_python_code(text)
-        
-    # For mixed content, handle code blocks separately
     if content_type == "mixed":
-        # Extract code blocks
-        text_with_placeholders, code_blocks = extract_code_blocks(text)
+        text_without_code, code_blocks = extract_code_blocks(text)
         
-        # Chunk the text
-        chunks = chunk_plain_text(text_with_placeholders, chunk_size, chunk_overlap)
+        # Split into paragraphs first
+        paragraphs = re.split(r'\n\s*\n', text_without_code)
         
-        # Restore code blocks
-        final_chunks = []
-        for chunk in chunks:
-            chunk_with_code = chunk
-            for placeholder, code in code_blocks:
-                if placeholder in chunk:
-                    if is_python_code(code):
-                        chunk_with_code = chunk_with_code.replace(
-                            placeholder, 
-                            "\n".join(chunk_python_code(code))
-                        )
-                    else:
-                        chunk_with_code = chunk_with_code.replace(
-                            placeholder, 
-                            f"```\n{code}\n```"
-                        )
-            final_chunks.append(chunk_with_code)
-        return final_chunks
-    
-    # For plain text, use sentence-based chunking
-    return chunk_plain_text(text, chunk_size, chunk_overlap)
+        chunks = []
+        current_chunk = []
+        current_size = 0
+        
+        for paragraph in paragraphs:
+            # Check if paragraph contains a list
+            list_match = re.match(r'^(\s*(?:[\-\*]|\d+[\.\)]|\w[\.\)])\s)', paragraph)
+            if list_match:
+                # This is a list - try to keep it together
+                if current_size + len(paragraph) > chunk_size and current_chunk:
+                    # List won't fit in current chunk, start a new one
+                    chunks.append('\n\n'.join(current_chunk))
+                    current_chunk = []
+                    current_size = 0
+                
+                current_chunk.append(paragraph)
+                current_size += len(paragraph)
+                continue
+            
+            # Check if paragraph contains a code block placeholder
+            if "[CODE_BLOCK_" in paragraph:
+                block_idx = int(re.search(r"\[CODE_BLOCK_(\d+)\]", paragraph).group(1))
+                code_block = code_blocks[block_idx]
+                
+                # Try to keep code with its context
+                context_size = len(paragraph) - len(f"[CODE_BLOCK_{block_idx}]") + len(code_block)
+                
+                if current_size + context_size > chunk_size and current_chunk:
+                    # Code and context won't fit, save current chunk
+                    chunks.append('\n\n'.join(current_chunk))
+                    current_chunk = []
+                    current_size = 0
+                
+                # Replace placeholder with actual code
+                current_chunk.append(paragraph.replace(f"[CODE_BLOCK_{block_idx}]", code_block))
+                current_size += context_size
+                continue
+            
+            # Regular paragraph
+            if current_size + len(paragraph) > chunk_size and current_chunk:
+                chunks.append('\n\n'.join(current_chunk))
+                current_chunk = []
+                current_size = 0
+            
+            current_chunk.append(paragraph)
+            current_size += len(paragraph)
+        
+        # Add the last chunk if there is one
+        if current_chunk:
+            chunks.append('\n\n'.join(current_chunk))
+        
+        return chunks
+        
+    elif content_type == "code":
+        code_chunks = chunk_python_code(text, chunk_size)
+        return [chunk.content for chunk in code_chunks]
+    else:
+        return chunk_plain_text(text, chunk_size, chunk_overlap)
