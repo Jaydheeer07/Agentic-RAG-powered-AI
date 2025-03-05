@@ -1,5 +1,5 @@
 from app.config import settings
-from app.core.chunking import chunk_text, detect_content_type
+from app.core.chunks.chunk_main import chunk_text, detect_content_type
 
 
 def print_chunk_stats(chunks: list, content_type: str):

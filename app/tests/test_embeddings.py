@@ -6,10 +6,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Union
 
-from app.core.chunking import chunk_text, detect_content_type
+from app.core.chunks.chunk_main import chunk_text, detect_content_type
 from app.core.title_summary import get_title_and_summary
 from app.core.get_embeddings import get_embedding
-from app.core.ast_chunker import CodeChunk, format_chunk_with_context
+from app.core.chunks.ast_chunker import CodeChunk, format_chunk_with_context
 
 
 def get_chunk_text(chunk: Union[str, CodeChunk]) -> str:

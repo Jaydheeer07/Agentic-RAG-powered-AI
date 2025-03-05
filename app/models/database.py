@@ -1,12 +1,10 @@
 from datetime import datetime, timezone
-
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import JSON, Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 
 Base = declarative_base()
-
 
 class Document(Base):
     __tablename__ = "documents"
@@ -15,6 +13,7 @@ class Document(Base):
     url = Column(String, nullable=False, unique=True)
     title = Column(String)
     content = Column(Text)
+    status = Column(String, default="pending")  # NEW: status field to track processing
     created_at = Column(DateTime, default=datetime.now(timezone.utc))
     updated_at = Column(
         DateTime,
@@ -28,8 +27,7 @@ class Document(Base):
     )
 
     def __repr__(self):
-        return f"<Document(id={self.id}, url='{self.url}', title='{self.title}')>"
-
+        return f"<Document(id={self.id}, url='{self.url}', title='{self.title}', status='{self.status}')>"
 
 class Chunk(Base):
     __tablename__ = "chunks"
@@ -38,7 +36,7 @@ class Chunk(Base):
     document_id = Column(Integer, ForeignKey("documents.id", ondelete="CASCADE"))
     content = Column(Text, nullable=False)
     embedding = Column(Vector(1536))  # For OpenAI embeddings
-    metadata = Column(JSON)
+    chunk_metadata = Column(JSON)  # renamed from metadata to avoid conflicts
     created_at = Column(DateTime, default=datetime.now(timezone.utc))
     updated_at = Column(
         DateTime,

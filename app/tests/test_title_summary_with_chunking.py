@@ -2,7 +2,7 @@ import asyncio
 import time
 from typing import List, Dict
 
-from app.core.chunking import chunk_text, detect_content_type
+from app.core.chunks.chunk_main import chunk_text, detect_content_type
 from app.core.title_summary import get_title_and_summary
 
 

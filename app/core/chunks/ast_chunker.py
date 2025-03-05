@@ -9,7 +9,7 @@ import ast
 from dataclasses import dataclass
 from typing import List, Set, Optional
 from app.config import settings
-from app.core.text_chunker import chunk_plain_text
+from app.core.chunks.text_chunker import chunk_plain_text
 
 @dataclass
 class CodeChunk:

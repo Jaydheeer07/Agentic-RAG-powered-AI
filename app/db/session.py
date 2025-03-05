@@ -16,6 +16,11 @@ def get_db():
     finally:
         db.close()
 
+def get_db_manager():
+    """Get database manager instance"""
+    from app.core.db_manager import DatabaseManager
+    return DatabaseManager(settings.DATABASE_URL)
+
 # Create all tables
 def init_db():
     """Initialize database tables"""

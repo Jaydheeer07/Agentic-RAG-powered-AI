@@ -1,8 +1,19 @@
-from typing import Optional
+from typing import Optional, List
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    # Application settings
+    APP_TITLE: str = "Agentic RAG API"
+    APP_DESCRIPTION: str = "API for RAG-powered document search and chat"
+    APP_VERSION: str = "1.0.0"
+    
+    # CORS settings
+    CORS_ORIGINS: List[str] = ["http://localhost:3000"]  # React default port
+    CORS_ALLOW_CREDENTIALS: bool = True
+    CORS_ALLOW_METHODS: List[str] = ["*"]
+    CORS_ALLOW_HEADERS: List[str] = ["*"]
+
     # PostgreSQL settings
     POSTGRES_USER: str
     POSTGRES_PASSWORD: str

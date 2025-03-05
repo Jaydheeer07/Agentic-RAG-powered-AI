@@ -3,7 +3,7 @@ import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
 from app.core.title_summary import get_title_and_summary
-from app.core.chunking import chunk_text
+from app.core.chunks.chunk_main import chunk_text
 
 
 @pytest.mark.asyncio

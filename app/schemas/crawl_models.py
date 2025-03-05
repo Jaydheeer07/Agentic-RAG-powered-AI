@@ -1,19 +1,19 @@
+from enum import Enum
 from pydantic import BaseModel, HttpUrl
 from typing import Dict, Any, Optional
 from datetime import datetime
 
+class CrawlStatus(str, Enum):
+    SUCCESS = "success"
+    FAILED = "failed"
+    RUNNING = "running"
+
 class CrawlRequest(BaseModel):
-    sitemap_url: HttpUrl
+    url: HttpUrl
     max_concurrent: Optional[int] = None
 
 class CrawlResponse(BaseModel):
-    status: str
+    status: CrawlStatus
     message: str
-    task_id: str
-
-class CrawlStatus(BaseModel):
-    status: str  # "running", "completed", or "failed"
-    message: str
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
     stats: Optional[Dict[str, Any]] = None
+    document_id: Optional[int] = None

@@ -2,7 +2,8 @@ import asyncio
 import logging
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List
 from xml.etree import ElementTree
 
@@ -10,14 +11,17 @@ import aiohttp
 import psutil
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CacheMode, CrawlerRunConfig
 
-from app.db.session import SessionLocal
-from app.models.database import Document
+# Setup paths
+__location__ = Path(__file__).parent.absolute()
+__output__ = __location__ / "output"
+__output__.mkdir(exist_ok=True)
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
+        logging.FileHandler(__output__ / "crawler.log", encoding="utf-8"),
         logging.StreamHandler(sys.stdout),
     ],
 )
@@ -30,34 +34,27 @@ os.environ["TERM"] = "xterm-256color"
 
 
 class MemoryTracker:
-    """Track memory usage during crawling"""
-
     def __init__(self):
         self.peak_memory = 0
         self.process = psutil.Process(os.getpid())
         self.start_time = datetime.now()
 
     def log_memory(self, prefix: str = "") -> Dict[str, Any]:
-        """Log current memory usage and return stats"""
         current_mem = self.process.memory_info().rss
         if current_mem > self.peak_memory:
             self.peak_memory = current_mem
 
-        duration = datetime.now() - self.start_time
-        memory_mb = current_mem / (1024 * 1024)
-        peak_memory_mb = self.peak_memory / (1024 * 1024)
-
         stats = {
-            "current_memory_mb": round(memory_mb, 2),
-            "peak_memory_mb": round(peak_memory_mb, 2),
-            "duration_seconds": duration.total_seconds(),
+            "current_mb": current_mem // (1024 * 1024),
+            "peak_mb": self.peak_memory // (1024 * 1024),
+            "cpu_percent": self.process.cpu_percent(),
+            "elapsed_time": str(datetime.now() - self.start_time),
         }
 
-        if prefix:
-            logger.info(
-                f"{prefix} - Memory: {memory_mb:.2f}MB, Peak: {peak_memory_mb:.2f}MB"
-            )
-
+        logger.info(
+            f"{prefix} Memory: {stats['current_mb']}MB (Peak: {stats['peak_mb']}MB) "
+            f"CPU: {stats['cpu_percent']}% Time: {stats['elapsed_time']}"
+        )
         return stats
 
 
@@ -93,7 +90,7 @@ async def crawl_parallel(urls: List[str], max_concurrent: int = 3) -> Dict[str, 
     crawl_config = CrawlerRunConfig(cache_mode=CacheMode.BYPASS)
 
     # Initialize statistics
-    stats = {"success_count": 0, "fail_count": 0, "errors": {}}
+    stats = {"success_count": 0, "fail_count": 0, "errors": {}, "memory_stats": []}
 
     # Create the crawler instance
     crawler = AsyncWebCrawler(config=browser_config)
@@ -113,6 +110,7 @@ async def crawl_parallel(urls: List[str], max_concurrent: int = 3) -> Dict[str, 
             mem_stats = memory_tracker.log_memory(
                 f"Batch {batch_num}/{(len(urls) + max_concurrent - 1) // max_concurrent}"
             )
+            stats["memory_stats"].append(mem_stats)
 
             # Process batch results
             results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -124,28 +122,15 @@ async def crawl_parallel(urls: List[str], max_concurrent: int = 3) -> Dict[str, 
                     stats["errors"][error_type] = stats["errors"].get(error_type, 0) + 1
                     stats["fail_count"] += 1
                     logger.error(f"Error crawling {url}: {result}")
-                    continue
-
-                if not result or not result.success:
-                    logger.warning(f"Failed to crawl {url}: No content retrieved")
-                    stats["fail_count"] += 1
-                    continue
-
-                try:
-                    db = SessionLocal()
-                    # Store the document with status "pending"
-                    document = Document(
-                        url=url,
-                        title="Untitled",  # Using URL as title since CrawlResult doesn't provide a title attribute
-                        content=result.markdown or result.html or "",
-                        status="pending",  # Mark as pending for later chunking
-                    )
-                    db.add(document)
-                    db.commit()
-                    db.refresh(document)
+                elif result.success:
                     stats["success_count"] += 1
-                finally:
-                    db.close()
+                    # Save content to file
+                    if result.markdown:
+                        output_file = __output__ / f"page_{stats['success_count']}.md"
+                        output_file.write_text(result.markdown, encoding="utf-8")
+                else:
+                    stats["fail_count"] += 1
+                    logger.warning(f"Failed to crawl {url}: No content retrieved")
 
             # Log progress
             total = stats["success_count"] + stats["fail_count"]
@@ -160,6 +145,21 @@ async def crawl_parallel(urls: List[str], max_concurrent: int = 3) -> Dict[str, 
 
         # Final memory stats
         final_stats = memory_tracker.log_memory("Final stats")
+        stats["memory_stats"].append(final_stats)
+
+        # Save summary report
+        summary = (
+            f"Crawling Summary\n"
+            f"================\n"
+            f"Total URLs: {len(urls)}\n"
+            f"Successful: {stats['success_count']}\n"
+            f"Failed: {stats['fail_count']}\n"
+            f"Error types:\n"
+            + "\n".join(f"- {k}: {v}" for k, v in stats["errors"].items())
+            + f"\n\nPeak memory usage: {final_stats['peak_mb']}MB\n"
+            f"Total time: {final_stats['elapsed_time']}\n"
+        )
+        (__output__ / "summary.txt").write_text(summary, encoding="utf-8")
 
     return stats
 
@@ -190,3 +190,31 @@ async def get_sitemap_urls(sitemap_url: str) -> List[str]:
             logger.error(f"Unexpected error: {e}")
 
         return []
+
+
+async def main():
+    """
+    Main execution function with improved error handling and logging.
+    """
+    try:
+        urls = await get_sitemap_urls("https://htmlburger.com/sitemap.xml")
+        if not urls:
+            logger.error("No URLs found to crawl")
+            return
+
+        logger.info(f"Starting crawl of {len(urls)} URLs")
+        stats = await crawl_parallel(urls, max_concurrent=5)
+
+        logger.info(
+            f"Crawl completed. Success: {stats['success_count']}, "
+            f"Failed: {stats['fail_count']}"
+        )
+        logger.info(f"Results saved in: {__output__}")
+
+    except Exception as e:
+        logger.error(f"Fatal error in main: {e}", exc_info=True)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
